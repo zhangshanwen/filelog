@@ -1,4 +1,4 @@
-module github.com/zhangshanwen/logfile
+module github.com/zhangshanwen/filelog
 
 go 1.16
 
