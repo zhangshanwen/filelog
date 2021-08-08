@@ -1,4 +1,4 @@
-package logfile
+package filelog
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package logfile
+package filelog
 
 import (
 	"errors"
@@ -12,13 +12,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 var (
 	defaultMaxFileSize int64       = 10 << 20                 // 10m
-	defaultPath                    = "./log"                  // 默认日志路径
-	defaultFileName                = "file.log"               // 默认日志文件名
-	defaultFormat                  = "%Y%m%d"                 // 默认文件后缀
+	defaultPath                    = "./logs"                 // 默认日志路径
+	defaultFileName                = "the_one"                // 默认日志文件名
+	defaultFormat                  = "%Y%m%d"                 // 默认文件匹配
+	defaultPostfix                 = ".log"                   // 默认文件后缀
 	defaultMaxAge                  = 7 * 24 * time.Hour       // 文件最大留存时间(7天)
 	defaultPerm        os.FileMode = 0644                     // 文件权限
 	PathSeparator                  = string(os.PathSeparator) // 目录分隔符
@@ -38,6 +41,7 @@ type Config struct {
 	Level       uint8         // 等级
 	Path        string        // 路径
 	FileName    string        // 文件名
+	Postfix     string        // 文件后缀
 	Format      string        // 文件匹配格式 %Y%m%d
 	MaxFileSize int64         // 文件最大size
 	IsLevelFile bool          // 是否分level输出日志，默认不开启
@@ -64,13 +68,16 @@ func NewFileHook(c *Config) (h *FileHook, err error) {
 	if c.Format == "" {
 		c.Format = defaultFormat
 	}
+	if c.Postfix == "" {
+		c.Postfix = defaultPostfix
+	}
 	if c.MaxFileSize <= 0 {
 		c.MaxFileSize = defaultMaxFileSize
 	}
 	if c.maxAge <= 0 {
 		c.maxAge = defaultMaxAge
 	}
-	if err = c.dealPath(); err != nil {
+	if err = c.initPath(); err != nil {
 		return
 	}
 	c.isAP = path.IsAbs(c.Path)
@@ -88,7 +95,7 @@ func NewFileHook(c *Config) (h *FileHook, err error) {
 	return
 }
 
-func (c *Config) dealPath() (err error) {
+func (c *Config) initPath() (err error) {
 	s, err := os.Stat(c.Path)
 	if err != nil {
 		return os.MkdirAll(c.Path, os.ModePerm)
@@ -154,13 +161,12 @@ func (h *FileHook) dealFiles() {
 	files, _ := ioutil.ReadDir(h.Path)
 	for _, f := range files {
 		// 筛选所有filename 开头的 filename*
-		fmt.Println(regexp.MatchString(matchStr, f.Name()))
 		if matched, _ := regexp.MatchString(matchStr, f.Name()); matched {
 			if f.IsDir() {
 				fmt.Println("目录:", f.Name())
 				continue
 			}
-			names := strings.Split(f.Name(), ".")
+			names := strings.Split(strings.ReplaceAll(f.Name(), h.Postfix, ""), ".")
 			index, err := strconv.Atoi(names[len(names)-1])
 			if err != nil {
 				fmt.Println("错误index", names[len(names)-1])
@@ -186,8 +192,7 @@ func (h *FileHook) isNotExist(filename string) bool {
 
 func (h *FileHook) linkFile() {
 	cmd := exec.Command("ln", "-snf", h.getNoPathFileName(), h.getLinkName())
-	err := cmd.Run()
-	fmt.Println(err)
+	_ = cmd.Run()
 }
 func (h *FileHook) getNoPathFileName() string {
 	timeStr := time.Now().Format(h.Format)
@@ -200,12 +205,12 @@ func (h *FileHook) getNoPathFileName() string {
 func (h *FileHook) getCurrentFileName() string {
 	timeStr := time.Now().Format(h.Format)
 	if timeStr == "" {
-		return fmt.Sprintf("%s%s%s%v", h.Path, PathSeparator, h.FileName, h.currentIndex)
+		return fmt.Sprintf("%s%s%s%v%s", h.Path, PathSeparator, h.FileName, h.currentIndex, h.Postfix)
 	}
-	return fmt.Sprintf("%s%s%s.%s.%v", h.Path, PathSeparator, h.FileName, timeStr, h.currentIndex)
+	return fmt.Sprintf("%s%s%s.%s.%v%s", h.Path, PathSeparator, h.FileName, timeStr, h.currentIndex, h.Postfix)
 }
 func (h *FileHook) getLinkName() string {
-	return fmt.Sprintf("%s%s%v", h.Path, PathSeparator, h.FileName)
+	return fmt.Sprintf("%s%s%v%s", h.Path, PathSeparator, h.FileName, h.Postfix)
 }
 func (h *FileHook) dealLogFile() {
 	h.dealFormat() // 处理匹配
@@ -227,4 +232,16 @@ func (h *FileHook) Write(line []byte) (err error) {
 	}
 	h.currentSize += int64(size)
 	return
+}
+func (h *FileHook) Fire(entry *logrus.Entry) error {
+	line, err := entry.Bytes()
+	if err != nil {
+		fmt.Printf("Unable to read entry, %v", err)
+		return err
+	}
+	return h.Write(line)
+}
+
+func (h *FileHook) Levels() []logrus.Level {
+	return logrus.AllLevels
 }
